@@ -165,11 +165,19 @@ STANDARD_DURATIONS = [("whole", 4.0), ("half", 2.0), ("quarter", 1.0),
                       ("eighth", 0.5), ("sixteenth", 0.25)]
 
 def beats_to_duration_name(beats):
-    """Map a beat count to the closest standard duration name."""
+    """Map a beat count to the largest standard duration that fits."""
     for name, val in STANDARD_DURATIONS:
-        if abs(beats - val) < 1e-6:
+        if val <= beats + 1e-6:
             return name
-    return "quarter"
+    return "sixteenth"
+
+
+def duration_name_to_beats(name):
+    """Look up the beat value for a standard duration name."""
+    for dur_name, dur_beats in STANDARD_DURATIONS:
+        if dur_name == name:
+            return dur_beats
+    return 1.0
 
 def pad_measure_with_rests(events, measure_num, used, beats_pm, beat_pos, key_label=None):
     """Append rest events to fill remaining beats in a measure."""
@@ -248,9 +256,11 @@ def generate_classical_period(key_string="C major",measures=8,time_signature=(4,
 
     def fill_bass_measure(m, chords):
         nonlocal last_bass
-        bass_dur_beats = beats_pm / len(chords)
-        bass_dur_name = beats_to_duration_name(bass_dur_beats)
+        target_beats = beats_pm / len(chords)
+        bass_dur_name = beats_to_duration_name(target_beats)
+        actual_beats = duration_name_to_beats(bass_dur_name)
         bass_beat = 1.0
+        bass_used = 0.0
         for ch in chords:
             play_chord = random.random() < 0.7
             octv = random.choice([2, 3])
@@ -264,10 +274,10 @@ def generate_classical_period(key_string="C major",measures=8,time_signature=(4,
                 notes_b = [ch[0] + str(octv)]
             bass.append({"measure": m, "beat_start": round(bass_beat, 3),
                          "type": typ, "notes": notes_b,
-                         "duration": bass_dur_name, "beats": bass_dur_beats,
+                         "duration": bass_dur_name, "beats": actual_beats,
                          "key": key_label})
-            bass_beat += bass_dur_beats
-        bass_used = bass_dur_beats * len(chords)
+            bass_beat += actual_beats
+            bass_used += actual_beats
         pad_measure_with_rests(bass, m, bass_used, beats_pm, bass_beat, key_label)
 
     # -------- Antecedent -------------

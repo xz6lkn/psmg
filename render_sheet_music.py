@@ -10,7 +10,7 @@ import os
 import subprocess
 import tempfile
 
-from music21 import stream, note, chord, meter, key, clef, tempo, metadata, spanner, interval
+from music21 import stream, note, chord, meter, key, clef, tempo, metadata, spanner, interval, layout
 
 from full_music_engine_logic import (
     generate_classical_period,
@@ -62,8 +62,9 @@ def add_slurs_to_part(part, placement="above"):
     """Add musical phrasing slurs to a Part.
 
     Scans all notes across the part for runs of stepwise motion.
-    Groups of 2+ consecutive stepwise notes get a slur.
-    Treble slurs above, bass slurs below.
+    Groups of 3+ consecutive stepwise notes get a slur.
+    Leaves at least 1 unslurred note between consecutive slurs to
+    prevent visual overlap.  Treble slurs above, bass slurs below.
     """
     all_notes = []
     for m in part.getElementsByClass(stream.Measure):
@@ -71,24 +72,31 @@ def add_slurs_to_part(part, placement="above"):
             if isinstance(n, note.Note):
                 all_notes.append(n)
 
-    if len(all_notes) < 2:
+    if len(all_notes) < 3:
         return
 
     runs = []
     current_run = [all_notes[0]]
+    skip_next = False
     for i in range(1, len(all_notes)):
+        if skip_next:
+            skip_next = False
+            current_run = [all_notes[i]]
+            continue
         if _is_stepwise(current_run[-1], all_notes[i]):
             current_run.append(all_notes[i])
         else:
-            if len(current_run) >= 2:
+            if len(current_run) >= 3:
                 runs.append(current_run)
+                skip_next = True
             current_run = [all_notes[i]]
-    if len(current_run) >= 2:
+    if len(current_run) >= 3:
         runs.append(current_run)
 
-    for run in runs:
+    for slur_id, run in enumerate(runs, start=1):
         s = spanner.Slur(run[0], run[-1])
         s.placement = placement
+        s.idLocal = slur_id
         part.insert(0, s)
 
 
@@ -104,10 +112,6 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
 
     for clef_name in ("treble", "bass"):
         part = stream.Part()
-        if clef_name == "treble":
-            part.insert(0, clef.TrebleClef())
-        else:
-            part.insert(0, clef.BassClef())
 
         current_measure_num = None
         m = None
@@ -128,13 +132,16 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
                 current_measure_num = measure_num
 
                 if first_measure:
-                    ts_copy = meter.TimeSignature(f"{time_sig[0]}/{time_sig[1]}")
-                    m.insert(0, ts_copy)
+                    if clef_name == "treble":
+                        m.insert(0, clef.TrebleClef())
+                    else:
+                        m.insert(0, clef.BassClef())
                     if key_str:
                         parts_k = key_str.split()
                         root_k = parts_k[0]
                         mode_k = parts_k[1] if len(parts_k) > 1 else "major"
                         m.insert(0, key.Key(root_k, mode_k))
+                    m.insert(0, meter.TimeSignature(f"{time_sig[0]}/{time_sig[1]}"))
                     first_measure = False
 
             duration_str = event.get("duration", "quarter")
@@ -162,6 +169,10 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
     for i, part in enumerate(score.parts):
         placement = "above" if i == 0 else "below"
         add_slurs_to_part(part, placement)
+
+    # Grand staff: brace + connected barlines for piano
+    sg = layout.StaffGroup(list(score.parts), symbol='brace', barTogether=True)
+    score.insert(0, sg)
 
     # Final safety net: fill any remaining gaps
     score.makeRests(fillGaps=True, inPlace=True)
@@ -205,24 +216,28 @@ def render(score, fmt="musicxml.png", filepath=None):
         return
 
     # For png/pdf: write MusicXML, then call MuseScore to convert
-    tmp = tempfile.NamedTemporaryFile(suffix=".musicxml", delete=False)
-    tmp.close()
-    score.write("musicxml", fp=tmp.name)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    tmp_xml = os.path.join(script_dir, "_temp_render.musicxml")
+    score.write("musicxml", fp=tmp_xml)
 
     if not filepath:
         ext = "png" if "png" in fmt else "pdf"
         filepath = f"output.{ext}"
 
-    result = subprocess.run(
-        [MUSESCORE_PATH, "-o", filepath, tmp.name],
+    filepath = os.path.abspath(filepath)
+    subprocess.run(
+        [MUSESCORE_PATH, "-o", filepath, tmp_xml],
         capture_output=True, text=True
     )
-    os.unlink(tmp.name)
+    os.unlink(tmp_xml)
 
-    if result.returncode != 0:
-        print(f"MuseScore error: {result.stderr}")
-    else:
+    # MuseScore may add page suffixes (-1, -2) for multi-page output
+    base, ext = os.path.splitext(filepath)
+    page1 = f"{base}-1{ext}"
+    if os.path.exists(filepath) or os.path.exists(page1):
         print(f"Saved to {filepath}")
+    else:
+        print("MuseScore rendering failed — no output files created.")
 
 
 # ==========================================
