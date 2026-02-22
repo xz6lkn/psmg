@@ -1,0 +1,4 @@
+output*.png
+output*.pdf
+__pycache__/
+*.pyc

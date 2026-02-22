@@ -92,7 +92,8 @@ def classical_to_score(data, title="Classical Period", key_str="C major",
                 m = stream.Measure(number=measure_num)
                 current_measure_num = measure_num
 
-            ql = event.get("beats", 1.0)
+            duration_str = event.get("duration", "quarter")
+            ql = parse_duration(duration_str)
             evt_type = event.get("type", "note")
             notes_list = event.get("notes", [])
 
@@ -158,7 +159,8 @@ def random_to_score(data, title="Random Sketch", time_sig=(4, 4)):
                 m = stream.Measure(number=measure_num)
                 current_measure_num = measure_num
 
-            ql = event.get("beats", 1.0)
+            duration_str = event.get("duration", "quarter")
+            ql = parse_duration(duration_str)
             notes_list = event.get("notes", [])
 
             if evt_type == "rest" or notes_list == ["Rest"]:
@@ -196,7 +198,7 @@ def render(score, fmt="musicxml.png", filepath=None):
         If provided, write to this path instead of opening a viewer.
     """
     if filepath:
-        score.write(fmt.replace("musicxml.", ""), fp=filepath)
+        score.write(fmt, fp=filepath)
         print(f"Saved to {filepath}")
     else:
         score.show(fmt)
