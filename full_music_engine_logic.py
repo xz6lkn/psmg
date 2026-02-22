@@ -158,11 +158,46 @@ def melodic_next(last,scale):
 
 
 # ==========================================
+# MEASURE PADDING
+# ==========================================
+
+STANDARD_DURATIONS = [("whole", 4.0), ("half", 2.0), ("quarter", 1.0),
+                      ("eighth", 0.5), ("sixteenth", 0.25)]
+
+def beats_to_duration_name(beats):
+    """Map a beat count to the closest standard duration name."""
+    for name, val in STANDARD_DURATIONS:
+        if abs(beats - val) < 1e-6:
+            return name
+    return "quarter"
+
+def pad_measure_with_rests(events, measure_num, used, beats_pm, beat_pos, key_label=None):
+    """Append rest events to fill remaining beats in a measure."""
+    remaining = round(beats_pm - used, 3)
+    while remaining > 1e-6:
+        filled = False
+        for dur_name, dur_beats in STANDARD_DURATIONS:
+            if dur_beats <= remaining + 1e-6:
+                evt = {"measure": measure_num, "beat_start": round(beat_pos, 3),
+                       "type": "rest", "notes": ["Rest"],
+                       "duration": dur_name, "beats": dur_beats}
+                if key_label:
+                    evt["key"] = key_label
+                events.append(evt)
+                remaining = round(remaining - dur_beats, 3)
+                beat_pos += dur_beats
+                filled = True
+                break
+        if not filled:
+            break
+
+
+# ==========================================
 # CLASSICAL PERIOD COMPOSER
 # ==========================================
 
 def generate_classical_period(key_string="C major",measures=8,time_signature=(4,4)):
-    """Creates an 8-measure Classical period (antecedent + consequent)."""
+    """Creates a Classical period (antecedent + consequent)."""
     root,mode=parse_key(key_string)
     num,den=time_signature; beats_pm=num*(4/den)
     scale=build_scale(root,mode)
@@ -173,67 +208,84 @@ def generate_classical_period(key_string="C major",measures=8,time_signature=(4,
     treble,bass=[],[]
     last_treble=None
     last_bass=None
+    key_label=f"{root} {mode}"
 
     def cadence_half(sc): return [roman_to_chord("I",sc), roman_to_chord("V",sc)]
     def cadence_full(sc): return [roman_to_chord("V",sc), roman_to_chord("I",sc)]
 
-    # -------- Antecedent -------------
-    ante_prog=random.choice(patterns)
-    for m in range(1,measures//2+1):
-        chords=cadence_half(scale) if m==measures//2 else [roman_to_chord(random.choice(ante_prog),scale)]
+    def fill_treble_measure(m, chords_in_measure, is_consequent=False, var_trans=0):
+        nonlocal last_treble
+        used, beat = 0.0, 1.0
+        while used < beats_pm:
+            nlen = random.choice(["quarter", "eighth"])
+            dot = random.random() < 0.1
+            nbeats = get_note_beats(nlen, dot, den)
+            if used + nbeats > beats_pm:
+                dot = False
+                found = False
+                for fallback in ["eighth", "sixteenth"]:
+                    fb = get_note_beats(fallback, False, den)
+                    if used + fb <= beats_pm + 1e-6:
+                        nlen, nbeats, found = fallback, fb, True
+                        break
+                if not found:
+                    break
+            nextp = melodic_next(last_treble, scale)
+            if last_treble and semitone_distance(nextp, last_treble[:-1]) > 7:
+                nextp = random.choice(scale)
+            if is_consequent and random.random() < 0.5:
+                idx = PITCHES.index(nextp)
+                nextp = PITCHES[(idx + var_trans) % 12]
+            note_full = nextp + str(random.choice([4, 5]))
+            last_treble = note_full
+            treble.append({"measure": m, "beat_start": round(beat, 3), "type": "note",
+                           "notes": [note_full],
+                           "duration": nlen + (" (dotted)" if dot else ""),
+                           "beats": round(nbeats, 3), "key": key_label})
+            beat += nbeats
+            used += nbeats
+        pad_measure_with_rests(treble, m, used, beats_pm, beat, key_label)
+
+    def fill_bass_measure(m, chords):
+        nonlocal last_bass
+        bass_dur_beats = beats_pm / len(chords)
+        bass_dur_name = beats_to_duration_name(bass_dur_beats)
+        bass_beat = 1.0
         for ch in chords:
-            play_chord=random.random()<0.7; octv=random.choice([2,3])
+            play_chord = random.random() < 0.7
+            octv = random.choice([2, 3])
             if play_chord:
-                notes_b=[ch[0]+str(octv), ch[2]+str(octv)]
-                if random.random()<0.3: notes_b.append(ch[1]+str(octv))
-                typ="chord"
+                notes_b = [ch[0] + str(octv), ch[2] + str(octv)]
+                if random.random() < 0.3:
+                    notes_b.append(ch[1] + str(octv))
+                typ = "chord"
             else:
-                typ="note"; notes_b=[ch[0]+str(octv)]
-            bass.append({"measure":m,"beat_start":1.0,"type":typ,"notes":notes_b,
-                         "duration":"half","beats":2.0,"key":f"{root} {mode}"})
-            used,beat=0.0,1.0
-            while used<beats_pm:
-                nlen=random.choice(["quarter","eighth"]); dot=random.random()<0.1
-                nbeats=get_note_beats(nlen,dot,den)
-                if used+nbeats>beats_pm: break
-                nextp=melodic_next(last_treble,scale)
-                if last_treble and semitone_distance(nextp,last_treble[:-1])>7:
-                    nextp=random.choice(scale)
-                note_full=nextp+str(random.choice([4,5])); last_treble=note_full
-                treble.append({"measure":m,"beat_start":round(beat,3),"type":"note",
-                               "notes":[note_full],"duration":nlen+(" (dotted)" if dot else ""),
-                               "beats":round(nbeats,3),"key":f"{root} {mode}"})
-                beat+=nbeats; used+=nbeats
+                typ = "note"
+                notes_b = [ch[0] + str(octv)]
+            bass.append({"measure": m, "beat_start": round(bass_beat, 3),
+                         "type": typ, "notes": notes_b,
+                         "duration": bass_dur_name, "beats": bass_dur_beats,
+                         "key": key_label})
+            bass_beat += bass_dur_beats
+        bass_used = bass_dur_beats * len(chords)
+        pad_measure_with_rests(bass, m, bass_used, beats_pm, bass_beat, key_label)
+
+    # -------- Antecedent -------------
+    ante_prog = random.choice(patterns)
+    for m in range(1, measures // 2 + 1):
+        chords = cadence_half(scale) if m == measures // 2 else [roman_to_chord(random.choice(ante_prog), scale)]
+        fill_bass_measure(m, chords)
+        fill_treble_measure(m, chords)
 
     # -------- Consequent -------------
-    cons_prog=random.choice(patterns)
-    var_trans=random.choice([-2,0,2,4])
-    for m in range(measures//2+1,measures+1):
-        chords=cadence_full(scale) if m==measures else [roman_to_chord(random.choice(cons_prog),scale)]
-        for ch in chords:
-            play_chord=random.random()<0.8; octv=random.choice([2,3])
-            if play_chord:
-                notes_b=[ch[0]+str(octv),ch[2]+str(octv)]
-                if random.random()<0.4: notes_b.append(ch[1]+str(octv))
-                typ="chord"
-            else:
-                typ="note"; notes_b=[ch[0]+str(octv)]
-            bass.append({"measure":m,"beat_start":1.0,"type":typ,"notes":notes_b,
-                         "duration":"half","beats":2.0,"key":f"{root} {mode}"})
-            used,beat=0.0,1.0
-            while used<beats_pm:
-                nlen=random.choice(["quarter","eighth"]); dot=random.random()<0.1
-                nbeats=get_note_beats(nlen,dot,den)
-                if used+nbeats>beats_pm: break
-                nextp=melodic_next(last_treble,scale)
-                if random.random()<0.5:   # motivic variation
-                    idx=PITCHES.index(nextp); nextp=PITCHES[(idx+var_trans)%12]
-                note_full=nextp+str(random.choice([4,5])); last_treble=note_full
-                treble.append({"measure":m,"beat_start":round(beat,3),"type":"note",
-                               "notes":[note_full],"duration":nlen+(" (dotted)" if dot else ""),
-                               "beats":round(nbeats,3),"key":f"{root} {mode}"})
-                beat+=nbeats; used+=nbeats
-    return {"treble":treble,"bass":bass}
+    cons_prog = random.choice(patterns)
+    var_trans = random.choice([-2, 0, 2, 4])
+    for m in range(measures // 2 + 1, measures + 1):
+        chords = cadence_full(scale) if m == measures else [roman_to_chord(random.choice(cons_prog), scale)]
+        fill_bass_measure(m, chords)
+        fill_treble_measure(m, chords, is_consequent=True, var_trans=var_trans)
+
+    return {"treble": treble, "bass": bass}
 
 
 # ==========================================

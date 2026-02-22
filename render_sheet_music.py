@@ -6,7 +6,7 @@ generate_two_clef_piece) into rendered sheet music (PNG, PDF, or
 interactive display).
 """
 
-from music21 import stream, note, chord, meter, key, clef, tempo, metadata
+from music21 import stream, note, chord, meter, key, clef, tempo, metadata, spanner, interval
 
 from full_music_engine_logic import (
     generate_classical_period,
@@ -45,35 +45,58 @@ def parse_note_name(name):
     return name.replace("b", "-")
 
 
+def _is_stepwise(n1, n2):
+    """Check if two music21 Note objects are a step apart (interval of a 2nd or less)."""
+    try:
+        ivl = interval.Interval(noteStart=n1, noteEnd=n2)
+        return abs(ivl.generic.value) <= 2
+    except Exception:
+        return False
+
+
+def add_slurs_to_part(part, placement="above"):
+    """Add musical phrasing slurs to a Part.
+
+    Scans all notes across the part for runs of stepwise motion.
+    Groups of 2+ consecutive stepwise notes get a slur.
+    Treble slurs above, bass slurs below.
+    """
+    all_notes = []
+    for m in part.getElementsByClass(stream.Measure):
+        for n in m.notesAndRests:
+            if isinstance(n, note.Note):
+                all_notes.append(n)
+
+    if len(all_notes) < 2:
+        return
+
+    runs = []
+    current_run = [all_notes[0]]
+    for i in range(1, len(all_notes)):
+        if _is_stepwise(current_run[-1], all_notes[i]):
+            current_run.append(all_notes[i])
+        else:
+            if len(current_run) >= 2:
+                runs.append(current_run)
+            current_run = [all_notes[i]]
+    if len(current_run) >= 2:
+        runs.append(current_run)
+
+    for run in runs:
+        s = spanner.Slur(run[0], run[-1])
+        s.placement = placement
+        part.insert(0, s)
+
+
 def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
     """Convert engine output to a music21 Score.
 
     Works with output from both generate_classical_period() and
-    generate_two_clef_piece(), since they now share the same format.
-
-    Parameters
-    ----------
-    data : dict with "treble" and "bass" lists of note dicts
-    title : str
-    key_str : str or None, e.g. "C major" or "A minor"
-    time_sig : tuple, e.g. (4, 4)
-
-    Returns
-    -------
-    music21.stream.Score
+    generate_two_clef_piece(), since they share the same format.
     """
     score = stream.Score()
     score.metadata = metadata.Metadata()
     score.metadata.title = title
-
-    ts = meter.TimeSignature(f"{time_sig[0]}/{time_sig[1]}")
-
-    k = None
-    if key_str:
-        parts = key_str.split()
-        root = parts[0]
-        mode = parts[1] if len(parts) > 1 else "major"
-        k = key.Key(root, mode)
 
     for clef_name in ("treble", "bass"):
         part = stream.Part()
@@ -81,12 +104,10 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
             part.insert(0, clef.TrebleClef())
         else:
             part.insert(0, clef.BassClef())
-        if k:
-            part.insert(0, k)
-        part.insert(0, ts)
 
         current_measure_num = None
         m = None
+        first_measure = True
 
         for event in data[clef_name]:
             evt_type = event.get("type", "note")
@@ -97,9 +118,20 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
 
             if measure_num != current_measure_num:
                 if m is not None:
+                    m.makeRests(inPlace=True)
                     part.append(m)
                 m = stream.Measure(number=measure_num)
                 current_measure_num = measure_num
+
+                if first_measure:
+                    ts_copy = meter.TimeSignature(f"{time_sig[0]}/{time_sig[1]}")
+                    m.insert(0, ts_copy)
+                    if key_str:
+                        parts_k = key_str.split()
+                        root_k = parts_k[0]
+                        mode_k = parts_k[1] if len(parts_k) > 1 else "major"
+                        m.insert(0, key.Key(root_k, mode_k))
+                    first_measure = False
 
             duration_str = event.get("duration", "quarter")
             ql = parse_duration(duration_str)
@@ -117,9 +149,18 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
                 m.append(n)
 
         if m is not None:
+            m.makeRests(inPlace=True)
             part.append(m)
 
         score.append(part)
+
+    # Add slurs: above for treble (part 0), below for bass (part 1)
+    for i, part in enumerate(score.parts):
+        placement = "above" if i == 0 else "below"
+        add_slurs_to_part(part, placement)
+
+    # Final safety net: fill any remaining gaps
+    score.makeRests(fillGaps=True, inPlace=True)
 
     return score
 
