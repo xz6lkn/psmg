@@ -1,7 +1,7 @@
 import random
 
 # ==========================================
-# 🎹 BASE NOTE DATA
+# BASE NOTE DATA
 # ==========================================
 
 notes = {
@@ -34,12 +34,12 @@ note_values = {
     "sixteenth": 0.0625
 }
 
-bass_clef  = {n: {"note": v, "clef": "Bass"} for n, v in notes.items()}
-treble_clef = {n: {"note": v, "clef": "Treble"} for n, v in notes.items()}
+bass_clef   = {n: {"note": v, "clef": "Bass"}   for n, v in notes.items() if int(n[1:]) <= 39}
+treble_clef = {n: {"note": v, "clef": "Treble"} for n, v in notes.items() if int(n[1:]) >= 40}
 
 
 # ==========================================
-# 🎼 SEQUENCER
+# SEQUENCER
 # ==========================================
 
 def get_note_length(name, dotted=False):
@@ -62,7 +62,9 @@ def create_sequence(data, clef="treble", time_signature=(4,4)):
             beats=get_note_length(length,dotted)/base_beat_value
             notes_set=["Rest"]
         else:
-            ids = entry[1] if kind=="chord" else [entry[1]]
+            ids = entry[1]
+            if isinstance(ids, str):
+                ids = [ids]
             length,dotted=entry[2],entry[3]
             beats=get_note_length(length,dotted)/base_beat_value
             notes_set=[clef_dict[n]["note"] for n in ids]
@@ -84,7 +86,7 @@ def create_sequence(data, clef="treble", time_signature=(4,4)):
 
 
 # ==========================================
-# 🎲 RANDOM NOTE GENERATOR
+# RANDOM NOTE GENERATOR
 # ==========================================
 
 def get_random_note_ids(clef):
@@ -114,14 +116,16 @@ def generate_random_measures(clef="treble",measures=5,time_signature=(4,4)):
     return events
 
 def generate_two_clef_piece(measures=5,time_signature=(4,4)):
+    raw_treble = generate_random_measures("treble", measures, time_signature)
+    raw_bass = generate_random_measures("bass", measures, time_signature)
     return {
-        "treble":generate_random_measures("treble",measures,time_signature),
-        "bass":generate_random_measures("bass",measures,time_signature)
+        "treble": create_sequence(raw_treble, clef="treble", time_signature=time_signature),
+        "bass": create_sequence(raw_bass, clef="bass", time_signature=time_signature),
     }
 
 
 # ==========================================
-# 🎵 MUSIC THEORY ENGINE
+# MUSIC THEORY ENGINE
 # ==========================================
 
 PITCHES=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
@@ -137,7 +141,7 @@ def build_scale(root,mode):
 
 def roman_to_chord(rn,scale):
     mapR={"I":0,"ii":1,"iii":2,"IV":3,"V":4,"vi":5,"vii":6,
-          "i":0,"ii°":1,"III":2,"iv":3,"V":4,"VI":5,"vii°":6}
+          "i":0,"ii\u00b0":1,"III":2,"iv":3,"V":4,"VI":5,"vii\u00b0":6}
     i=mapR.get(rn,0)
     return [scale[i%7], scale[(i+2)%7], scale[(i+4)%7]]
 
@@ -154,16 +158,16 @@ def melodic_next(last,scale):
 
 
 # ==========================================
-# 🎻 CLASSICAL PERIOD COMPOSER
+# CLASSICAL PERIOD COMPOSER
 # ==========================================
 
 def generate_classical_period(key_string="C major",measures=8,time_signature=(4,4)):
-    """Creates an 8‑measure Classical period (antecedent + consequent)."""
+    """Creates an 8-measure Classical period (antecedent + consequent)."""
     root,mode=parse_key(key_string)
     num,den=time_signature; beats_pm=num*(4/den)
     scale=build_scale(root,mode)
     major_pats=[["I","IV","V","I"],["I","ii","V","I"],["I","vi","IV","V","I"]]
-    minor_pats=[["i","iv","V","i"],["i","ii°","V","i"],["i","VI","ii°","V","i"]]
+    minor_pats=[["i","iv","V","i"],["i","ii\u00b0","V","i"],["i","VI","ii\u00b0","V","i"]]
     patterns=major_pats if mode=="major" else minor_pats
 
     treble,bass=[],[]
@@ -233,29 +237,26 @@ def generate_classical_period(key_string="C major",measures=8,time_signature=(4,
 
 
 # ==========================================
-# 🧭 DEMO / MAIN EXECUTION
+# DEMO / MAIN EXECUTION
 # ==========================================
 
 if __name__=="__main__":
-    print("🎹  Classical Composition Engine")
+    print("Classical Composition Engine")
     mode_choice=input("Enter 'classical' for Classical period piece or 'random' for random sketch: ").strip().lower() or "classical"
 
     if mode_choice.startswith("r"):
-        rand=generate_two_clef_piece(measures=5)
-        print("\n🎼 Treble (random)")
-        for e in rand["treble"]: print(e)
-        print("\n🎵 Bass (random)")
-        for e in rand["bass"]: print(e)
-
+        comp=generate_two_clef_piece(measures=5)
     else:
         key_in=input("Enter key (e.g. 'C major', 'A minor'): ").strip() or "C major"
         comp=generate_classical_period(key_in,measures=8)
-        print("\n🎼 TREBLE\n")
-        for n in comp["treble"]:
-            print(f"M{n['measure']:>2} | Beat {n['beat_start']:<4} | {n['notes'][0]:<6} | "
-                  f"{n['duration']:<13} | {n['beats']}b | {n['key']}")
-        print("\n🎵 BASS\n")
-        for n in comp["bass"]:
-            bassnotes=", ".join(n['notes'])
-            print(f"M{n['measure']:>2} | Beat {n['beat_start']:<4} | {bassnotes:<10} | "
-                  f"{n['duration']:<13} | {n['beats']}b | {n['key']}")
+
+    for clef_label in ("treble","bass"):
+        print(f"\n{clef_label.upper()}\n")
+        for n in comp[clef_label]:
+            if n.get("type") == "barline":
+                continue
+            notes_str = ", ".join(n["notes"])
+            key_str = n.get("key", "")
+            print(f"M{n['measure']:>2} | Beat {n['beat_start']:<4} | {notes_str:<12} | "
+                  f"{n['duration']:<13} | {n['beats']}b"
+                  + (f" | {key_str}" if key_str else ""))
