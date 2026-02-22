@@ -6,6 +6,10 @@ generate_two_clef_piece) into rendered sheet music (PNG, PDF, or
 interactive display).
 """
 
+import os
+import subprocess
+import tempfile
+
 from music21 import stream, note, chord, meter, key, clef, tempo, metadata, spanner, interval
 
 from full_music_engine_logic import (
@@ -165,6 +169,9 @@ def to_score(data, title="Composition", key_str=None, time_sig=(4, 4)):
     return score
 
 
+MUSESCORE_PATH = r"C:\Program Files\MuseScore 4\bin\MuseScore4.exe"
+
+
 def render(score, fmt="musicxml.png", filepath=None):
     """Render a music21 Score.
 
@@ -180,11 +187,42 @@ def render(score, fmt="musicxml.png", filepath=None):
     filepath : str or None
         If provided, write to this path instead of opening a viewer.
     """
-    if filepath:
-        score.write(fmt, fp=filepath)
-        print(f"Saved to {filepath}")
+    if fmt == "text":
+        if filepath:
+            score.write(fmt, fp=filepath)
+            print(f"Saved to {filepath}")
+        else:
+            score.show(fmt)
+        return
+
+    if fmt == "musicxml" and not filepath:
+        # Write temp MusicXML then open in MuseScore
+        tmp = tempfile.NamedTemporaryFile(suffix=".musicxml", delete=False)
+        tmp.close()
+        score.write("musicxml", fp=tmp.name)
+        subprocess.Popen([MUSESCORE_PATH, tmp.name])
+        print("Opened in MuseScore.")
+        return
+
+    # For png/pdf: write MusicXML, then call MuseScore to convert
+    tmp = tempfile.NamedTemporaryFile(suffix=".musicxml", delete=False)
+    tmp.close()
+    score.write("musicxml", fp=tmp.name)
+
+    if not filepath:
+        ext = "png" if "png" in fmt else "pdf"
+        filepath = f"output.{ext}"
+
+    result = subprocess.run(
+        [MUSESCORE_PATH, "-o", filepath, tmp.name],
+        capture_output=True, text=True
+    )
+    os.unlink(tmp.name)
+
+    if result.returncode != 0:
+        print(f"MuseScore error: {result.stderr}")
     else:
-        score.show(fmt)
+        print(f"Saved to {filepath}")
 
 
 # ==========================================
